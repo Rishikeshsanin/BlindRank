@@ -4,6 +4,23 @@ import { categories } from './data.js';
 // Project Hub: BlindRank-only database login; no service_role/admin credentials.
 const uri = Deno.env.get('BLINDRANK_DATABASE_URL');
 const sql = uri ? postgres(uri, { ssl: 'require', prepare: false, max: 2, idle_timeout: 10 }) : null;
+// A per-isolate soft throttle complements room-size and global active-room caps.
+// Distributed production abuse defenses should still be configured upstream.
+const recentRequests = new Map<string,{ count:number, reset:number }>();
+function limit(req: Request, action: string) {
+  if (action !== 'create' && action !== 'join') return;
+  const addr = (req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip') || req.headers.get('x-forwarded-for')?.split(',')[0] || '').trim();
+  // Headers can be spoofed by some clients: this is only a best-effort soft limit.
+  const key = action + ':' + (addr || 'unknown');
+  const now = Date.now();
+  if (recentRequests.size > 10000) {
+    for (const [k,v] of recentRequests) if (v.reset <= now) recentRequests.delete(k);
+  }
+  const current = recentRequests.get(key);
+  const max = action === 'create' ? 5 : 24;
+  if (current && current.reset > now && current.count >= max) throw Error('Too many requests. Please try again soon.');
+  recentRequests.set(key, !current || current.reset <= now ? {count:1,reset:now+60000} : {count:current.count+1,reset:current.reset});
+}
 const cors = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'POST, OPTIONS',
@@ -75,6 +92,8 @@ async function create(body:any){
   if(!['classic','judge'].includes(mode))throw Error('Unknown game mode.');
   const secret=token(),secretHash=await hash(secret);
   await sql!`delete from blindrank.rooms where expires_at<now()`;
+  const [usage] = await sql!`select count(*)::int as active_count from blindrank.rooms where expires_at>now()`;
+  if (usage.active_count >= 500) throw Error('Room capacity reached. Try again later.');
   for(let i=0;i<5;i++){
     const roomCode=code();
     try{
@@ -100,9 +119,12 @@ async function act(body:any){
   const roomId=roomCode(body.code),room=await getRoom(roomId),me=await getPlayer(room,body.token),secret=String(body.token),host=room.host_player_id===me.id;
   if(cmd==='get')return snapshot(roomId,secret);
   if(cmd==='ready'){
-    if(room.status!=='lobby')throw Error('Cannot change ready state after starting.');
-    if(host&&body.ready!==true)throw Error('Host must remain ready.');
-    await sql!`update blindrank.players set ready=${body.ready===true} where id=${me.id} and room_id=${room.id} and active=true`;
+    await sql!.begin(async tx=>{
+      const [locked]=await tx`select status,host_player_id from blindrank.rooms where id=${room.id} for update`;
+      if(!locked||locked.status!=='lobby')throw Error('Cannot change ready state after starting.');
+      if(locked.host_player_id===me.id && body.ready!==true)throw Error('Host must remain ready.');
+      await tx`update blindrank.players set ready=${body.ready===true} where id=${me.id} and room_id=${room.id} and active=true`;
+    });
   }else if(cmd==='start'){
     if(!host)throw Error('Only host can start.');
     await sql!.begin(async tx=>{
@@ -129,6 +151,7 @@ async function act(body:any){
     await sql!.begin(async tx=>{
       const [locked]=await tx`select * from blindrank.rooms where id=${room.id} for update`;
       if(!locked||locked.status!=='results')throw Error('Finish the round first.');
+      if(locked.host_player_id!==me.id)throw Error('Only host can continue.');
       if(locked.round_number>=999)throw Error('Session reached round limit.');
       const people=await tx`select id from blindrank.players where room_id=${room.id} and active=true order by joined_at,id`;
       if(people.length<2)throw Error('Not enough players left.');
@@ -139,13 +162,17 @@ async function act(body:any){
       await tx`update blindrank.rooms set status=${locked.mode==='judge'?'judge_setup':'playing'},round_number=${locked.round_number+1},prompt=${pack.prompt},items=${tx.json(pack.items)},last_pack_id=${pack.id},reveal_index=0,judge_player_id=${judge},judge_ranking=null,updated_at=now() where id=${room.id}`;
     });
   }else if(cmd==='kick'){
-    if(!host)throw Error('Only host can remove players.');
-    if(room.status==='results')throw Error('Cannot kick during results.');
     const target=String(body.player_id||'');
     if(target===me.id)throw Error('Use Leave Room for yourself.');
-    const [player]=await sql!`select id from blindrank.players where id=${target}::uuid and room_id=${room.id} and active=true limit 1`;
-    if(!player)throw Error('Player not in room.');
-    await sql!`select blindrank.depart(${room.id}::uuid,${target}::uuid,${true}::boolean)`;
+    if(!/^[0-9a-f-]{36}$/i.test(target))throw Error('Invalid player.');
+    await sql!.begin(async tx=>{
+      const [locked]=await tx`select status,host_player_id from blindrank.rooms where id=${room.id} for update`;
+      if(!locked||locked.host_player_id!==me.id)throw Error('Only host can remove players.');
+      if(locked.status==='results')throw Error('Cannot kick during results.');
+      const [player]=await tx`select id from blindrank.players where id=${target}::uuid and room_id=${room.id} and active=true limit 1`;
+      if(!player)throw Error('Player not in room.');
+      await tx`select blindrank.depart(${room.id}::uuid,${target}::uuid,${true}::boolean)`;
+    });
   }else if(cmd==='leave'){
     await sql!`select blindrank.depart(${room.id}::uuid,${me.id}::uuid,${false}::boolean)`;
     return {ok:true};
@@ -159,13 +186,16 @@ Deno.serve(async(req:Request)=>{
   if(Number(req.headers.get('content-length')||0)>10000)return error('Request too large.',413);
   if(!(req.headers.get('content-type')||'').includes('application/json'))return error('JSON required.',415);
   try{
-    const body=await req.json();
+    const rawBody = await req.text();
+    if(new TextEncoder().encode(rawBody).length > 10000)return error('Request too large.',413);
+    const body = JSON.parse(rawBody);
     if(!body||typeof body!=='object'||Array.isArray(body))return error('Invalid request.');
+    limit(req,String(body.action||''));
     return result(await act(body));
   }catch(e){
     const raw=e instanceof Error?e.message:'';
     // Never disclose DB stack traces, connection details or credentials.
-    const approved=/^(Nickname|Unknown category|Unknown game|Invalid room code|Room not found|Invalid player token|Invalid token|Room is full|Nickname already taken|Game already started|Could not create room|Cannot change ready|Host must remain ready|Only host|Room already started|Invite at least two|Everyone must be ready|Only current Judge|Ranking must contain|Judge ranking already|Invalid slot|You already ranked|Slot is already locked|Round is not accepting|The Judge does not|Finish the round|Session reached|Not enough players|Cannot kick|Use Leave Room|Player not in room|Unknown action)/.test(raw);
+    const approved=/^(Nickname|Unknown category|Unknown game|Invalid room code|Room not found|Invalid player token|Invalid token|Room is full|Nickname already taken|Game already started|Could not create room|Cannot change ready|Host must remain ready|Only host|Room already started|Invite at least two|Everyone must be ready|Only current Judge|Ranking must contain|Judge ranking already|Invalid slot|Invalid player|Too many requests|Room capacity reached|You already ranked|Slot is already locked|Round is not accepting|The Judge does not|Finish the round|Session reached|Not enough players|Cannot kick|Use Leave Room|Player not in room|Unknown action)/.test(raw);
     const msg=approved&&raw.length<160?raw:'Could not complete that action. Please retry.';
     return error(msg,/token|removed/i.test(msg)?401:/not found|expired/i.test(msg)?404:400);
   }
