@@ -32,8 +32,7 @@ create table if not exists public.br_players (
  total_score integer not null default 0,
  round_score integer not null default 0,
  joined_at timestamptz not null default now(),
- last_seen_at timestamptz not null default now(),
- unique(room_id,name)
+ last_seen_at timestamptz not null default now()
 );
 create table if not exists public.br_placements (
  room_id uuid not null references public.br_rooms(id) on delete cascade,
@@ -46,6 +45,7 @@ create table if not exists public.br_placements (
  unique (room_id,round_number,player_id,rank_slot)
 );
 create index if not exists br_players_room_active_idx on public.br_players(room_id,active);
+create unique index if not exists br_players_active_name_idx on public.br_players(room_id,lower(name)) where active;
 create index if not exists br_placements_room_round_idx on public.br_placements(room_id,round_number);
 create index if not exists br_rooms_expiry_idx on public.br_rooms(expires_at);
 

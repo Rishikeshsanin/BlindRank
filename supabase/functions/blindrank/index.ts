@@ -106,7 +106,7 @@ async function action(body:any){const cmd=String(body.action||'');if(cmd==='crea
     if(ps.length<2)throw Error('Not enough players left.');
     const pack=choosePack(room.category,room.last_pack_id||'');
     const lastIndex=ps.findIndex((p:any)=>p.id===room.judge_player_id);
-    const nextJudge=room.mode==='judge'?ps[(Math.max(lastIndex,0)+1)%ps.length].id:null;
+    const nextJudge=room.mode==='judge'?ps[lastIndex<0?0:(lastIndex+1)%ps.length].id:null;
     throwDb(await db.from('br_players').update({round_score:0}).eq('room_id',room.id));
     throwDb(await db.from('br_rooms').update({status:room.mode==='judge'?'judge_setup':'playing',round_number:room.round_number+1,prompt:pack.prompt,items:pack.items,last_pack_id:pack.id,reveal_index:0,judge_player_id:nextJudge,judge_ranking:null,updated_at:new Date().toISOString()}).eq('id',room.id).eq('status','results'));
   }else if(cmd==='kick'){
