@@ -13,9 +13,9 @@ A mobile-first, no-login ranking party game and future independent Minglecade ca
 - **Share or save a result card** as PNG; copy/share via native device options.
 - **Mobile-first** layout, keyboard-operable slots, focus styles, muted sound toggle, reduced-motion CSS, persistent Quick Play progress.
 
-## Real party rooms (dedicated server required)
+## Real party rooms (Project Hub integration)
 
-The repository includes a complete **separate** Supabase migration and Edge Function for:
+The repository includes an **isolated** multiplayer schema and app-prefixed Edge Function inside the existing shared Supabase **Project Hub** for:
 
 - 2–12 player rooms with six-character codes and invitation links; no login.
 - Server-selected packs with future items hidden from clients.
@@ -26,7 +26,7 @@ The repository includes a complete **separate** Supabase migration and Edge Func
 - **Guess My Ranking**: rotating Judge, secret true order, 0–10 score equal to the number of correctly ordered pairs.
 - Raw tables are protected by RLS without client policies; server-only RPC enforces placement and room-capacity constraints in transactions.
 
-**Important:** Until the dedicated database and Edge Function are deployed and `config.js` contains their URL, the Party Room form is **intentionally disabled**. It does not fake functioning multiplayer.
+**Current state:** Project Hub App #15 is registered; `blindrank.rooms`, `blindrank.players`, `blindrank.placements`, app-only RLS/SQL functions, and `blindrank-game-api` are deployed. A BlindRank-scoped database login and Edge Function secret still need to be configured, followed by multiplayer E2E tests. The Party Room form remains **intentionally disabled** until verified; it never fakes working multiplayer.
 
 ## Run locally
 
@@ -45,31 +45,47 @@ Any HTTP static server also works. Do not open `index.html` with `file://` becau
 1. Import `Rishikeshsanin/BlindRank` as a new Vercel project.
 2. Framework preset: `Other` (static site); root directory: `/`; no install/build command needed.
 3. Deploy. Quick Play and Custom Rank work immediately without Supabase.
-4. Deploy a **new dedicated** Supabase project for multiplayer (see next section) before advertising Party Room as available.
+4. Do **not** create a new Supabase project. Follow the existing Project Hub onboarding below before advertising multiplayer as ready.
 
-## Enable actual multiplayer (separate infrastructure)
+## Shared Supabase Project Hub (read the governance notice first)
 
-**Never apply these migrations to another existing project**, including any Project Hub or Minglecade backend.
+**Use the existing** Supabase Project Hub (project ref `nowlwprtcnieihelqjoa`); **never create a separate Supabase project for BlindRank**.
 
-1. Create a fresh Supabase project named BlindRank within the organization you select. Confirm pricing/quota before creation.
-2. Apply `supabase/migrations/202610160001_blindrank.sql` in that new project's SQL editor or CLI. Use a dedicated project only.
-3. Deploy `supabase/functions/blindrank` as an Edge Function named `blindrank`, **with `verify_jwt=false`**. Anonymous players authenticate with server-issued random room tokens (not Supabase Auth). Example with the Supabase CLI after authenticating:
+The canonical live governance notice is `hub.read_me_first`. See `AGENTS.md` and `SUPABASE_HUB_RULES.md` before every database change. BlindRank was added as **App #15** (`slug = schema_name = blindrank`), after the repository safety files were verified, and `hub.assert_app_scope('blindrank','blindrank')` passed.
 
-   ```bash
-   supabase link --project-ref YOUR_BLINDRANK_PROJECT_REF
-   supabase db push
-   supabase functions deploy blindrank --no-verify-jwt
+Already completed and verified:
+
+- `supabase/project-hub/migrations/blindrank__001_rooms.sql`: created only `blindrank.*` tables and RPCs, RLS, and `blindrank_runtime` (NOLOGIN, app-only permissions). No `public` application tables, other app changes, global extensions, or global service-role credentials.
+- `blindrank__002_player_index.sql`: additional app-only player lookup index.
+- Both migrations and nine database resources were registered in the Hub ledger. The app-prefixed `blindrank-game-api` Edge Function was deployed and registered separately.
+- Anonymous and ordinary authenticated roles have no SELECT on the BlindRank tables; the private `blindrank_runtime` role does.
+
+**The multiplayer server is NOT YET CONNECTED** because the Hub's project-wide service-role key and project-admin DB URL are forbidden for ordinary apps. The deployed Edge Function deliberately responds with HTTP 503 until an app-scoped connection secret is configured. Quick Play and Custom Rank are unaffected.
+
+### Finish the secure backend connection
+
+1. In the Project Hub SQL editor, provision a **new BlindRank-only LOGIN role**. Choose a long unique password privately, and do not put it in GitHub or chat:
+
+   ```sql
+   -- Use a unique password privately in the Supabase SQL editor.
+   CREATE ROLE blindrank_worker LOGIN INHERIT PASSWORD '<UNIQUE_RANDOM_PASSWORD>';
+   GRANT blindrank_runtime TO blindrank_worker;
    ```
 
-4. The function reads `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the server via its Supabase-provided environment. **Never copy the service-role key into frontend code, GitHub, or Vercel client variables.**
-5. Edit `config.js` and set **only the public Edge Function URL**:
+   Do not give this role memberships, privileges, or access to any other app schema. The role inherits only what `blindrank_runtime` has been granted.
+
+2. Obtain the **scoped worker role's** PostgreSQL connection URI from the Project Hub database connection settings (use Supavisor transaction pooler with SSL if appropriate for your environment). In Supabase **Project Hub → Edge Functions → Secrets**, add `BLINDRANK_DATABASE_URL` with that app-role URL. Do not paste credentials into the browser, `config.js`, Vercel client environment variables, or repository.
+3. Redeploy `supabase/functions/blindrank-game-api/` if needed. It is deployed under `blindrank-game-api` with `verify_jwt=false`; players authenticate by high-entropy per-room tokens. Do not expose the privileged service key or project-admin connection string.
+4. Run real two-device tests: create room → join → ready → start → lock each of five items → reveal → next round. Also verify judge scores, reconnect/refresh, leaving and host transfer, concurrent slot locking, expired rooms and anonymous denial. Add rate limiting and review abuse quotas before public promotion.
+5. **Only after the backend passes these tests**, update public `config.js` to:
 
    ```js
-   window.BLINDRANK_API_URL = 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/blindrank';
+   window.BLINDRANK_API_URL = 'https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api';
    ```
 
-6. Redeploy and run a genuine 2-device test: create → join → ready → start → lock 5 rankings → reveal → rematch, plus Judge scoring, refresh/reconnect, host departure, and conflicting simultaneous placements.
-7. Check RLS, Edge Function logs, anti-abuse limits, quotas and performance before broadly promoting the rooms.
+   Then redeploy BlindRank on Vercel and verify the public website. The function URL is public; the database URI is private.
+
+Run `hub.assert_app_scope('blindrank','blindrank')`, Supabase advisors and cross-app isolation checks before further database changes. Keep unrelated Hub app resources untouched.
 
 ## Folder map
 
@@ -79,8 +95,8 @@ Any HTTP static server also works. Do not open `index.html` with `file://` becau
 | `logic.js` | Testable pure ranking rules |
 | `data.js` | Human-curated, local content library |
 | `config.js` | Public endpoint configuration (empty by default) |
-| `supabase/migrations/...sql` | Private room tables and atomic game rules |
-| `supabase/functions/blindrank/` | Authenticated party-room Edge Function + identical content library |
+| `supabase/project-hub/migrations/` | BlindRank-only Hub migrations (legacy dedicated-project SQL disabled) |
+| `supabase/functions/blindrank-game-api/` | App-scoped Edge Function; requires backend-only database secret |
 | `tests/` | Node built-in game-rule tests |
 | `.github/workflows/check.yml` | CI syntax and logic checks |
 
@@ -88,11 +104,11 @@ Any HTTP static server also works. Do not open `index.html` with `file://` becau
 
 `npm run check` runs syntax checks and automated tests for unique five-item rounds, irreversible slots, custom input validation, progress invariants, permutation scoring, and shuffle integrity.
 
-The Edge Function and migration still require a dedicated Supabase staging/production environment to run integration tests. Do not call multiplayer production-verified merely because local rule tests pass.
+Database migrations passed isolated Hub checks, but a scoped backend credential and genuine multiplayer integration tests are still required. Do not call multiplayer production-verified merely because local logic tests pass.
 
 ## Known limitations / next steps
 
-- Party Room is not usable until its dedicated backend is provisioned and configured.
+- Party Room is disabled until the scoped worker login/Edge secret are configured and live multiplayer is verified.
 - The room transport is 2-second polling rather than WebSockets; this is deliberate for simple consistency, with server-authoritative state.
 - Inactive players can block progression until the host removes them; automatic AFK timeout and graceful late reconnection are future enhancements.
 - Custom Rank V1 is solo/local; editable custom party packs are not yet available.
