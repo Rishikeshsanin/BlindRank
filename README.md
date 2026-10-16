@@ -59,6 +59,20 @@ The Hub governance prohibits the app from using the shared `SUPABASE_SERVICE_ROL
 
 The Edge Function intentionally returns a safe unavailable response when its app-only DB secret is missing. Do not remove this guard.
 
+#### Readiness and operations
+
+The deployed Edge Function provides a secret-free readiness route:
+
+```text
+GET https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api/health
+```
+
+It returns HTTP 200 with `status: "ready"` only when PostgreSQL is reachable through the exact `blindrank_app` identity. Without the credential, or with an overprivileged/admin connection, it returns HTTP 503. This is a **readiness check**, not proof that multiplayer works: complete the full live two-browser flow before exposing room buttons.
+
+Request body sizes, repeated create/join attempts (best-effort per Edge isolate), and simultaneous active room count (up to 500) are bounded. The in-memory throttle is **not** a substitute for durable, IP-verified distributed abuse prevention at scale. Future upgrades must respect the Hub's app-specific ownership boundary.
+
+The app-scoped database smoke test is maintained at `tests/PROJECT_HUB_QA.sql`. It creates only temporary `blindrank.*` data and removes its rows after successful execution. It should be run by an authorized Hub operator, not automatically by ordinary application code.
+
 ## Local frontend
 
 ```bash
@@ -71,8 +85,8 @@ Node 20+ is required for tests. Browser gameplay itself has no paid API or login
 
 ## Status and boundaries
 
-- **Verified:** standalone frontend release; source published; 7/7 game-rule tests; Hub App #15; schema and private RLS tables; Edge Function deployed.
-- **Pending:** app-only connection secret, Edge Function ↔ DB live authentication, multiplayer integration/browser tests, rate limits and public multiplayer activation.
+- **Verified:** standalone frontend release; source published; 12/12 GitHub CI tests (7 game-rule + 5 governance); Hub App #15; isolated RLS tables and restricted runtime role; Edge Function v3 deployed; BlindRank-only SQL QA passed for 12-player capacity, one-way ranking, progression, host transfer, and Judge scoring.
+- **Pending:** private app-only connection secret, end-to-end Edge Function ↔ DB login verification, live two-browser multiplayer tests, durable distributed rate limiting for large public traffic, and public multiplayer activation.
 - **Unchanged:** Minglecade, all other GitHub repositories, all other Project Hub application schemas, Auth, storage, shared service-role credentials and project-wide settings.
 
 Do not claim multiplayer is complete or publicly playable until the pending items are genuinely verified.
