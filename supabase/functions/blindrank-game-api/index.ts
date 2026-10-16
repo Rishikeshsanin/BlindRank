@@ -21,9 +21,15 @@ function limit(req: Request, action: string) {
   if (current && current.reset > now && current.count >= max) throw Error('Too many requests. Please try again soon.');
   recentRequests.set(key, !current || current.reset <= now ? {count:1,reset:now+60000} : {count:current.count+1,reset:current.reset});
 }
+// Reject any mistakenly supplied privileged Hub connection. No admin/service role is valid.
+async function assertScopedLogin() {
+  if (!sql) return false;
+  const [identity] = await sql`select current_user::text as username`;
+  return identity?.username === 'blindrank_app';
+}
 const cors = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info',
   'cache-control': 'no-store',
 };
@@ -181,8 +187,20 @@ async function act(body:any){
 }
 Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
+  if(req.method==='GET') {
+    if(!new URL(req.url).pathname.endsWith('/health'))return error('Not found.',404);
+    if(!sql)return result({status:'setup_required'},503);
+    try {
+      if(!await assertScopedLogin())return result({status:'configuration_error'},503);
+      await sql`select 1 as healthy`;
+      return result({status:'ready',app:'blindrank'},200);
+    } catch { return result({status:'unavailable'},503); }
+  }
   if(req.method!=='POST')return error('POST required.',405);
   if(!sql)return error('BlindRank room backend awaiting scoped database credential.',503);
+  try{
+    if(!await assertScopedLogin())return error('BlindRank scoped database login is not configured correctly.',503);
+  }catch{return error('BlindRank room backend unavailable.',503);}
   if(Number(req.headers.get('content-length')||0)>10000)return error('Request too large.',413);
   if(!(req.headers.get('content-type')||'').includes('application/json'))return error('JSON required.',415);
   try{
