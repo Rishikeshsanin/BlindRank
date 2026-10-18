@@ -49,7 +49,18 @@ try {
     await guest.locator('[data-action="room-place"][data-slot="'+(4-i)+'"]').click();
     await host.locator('.room-result, .result-hero, [data-action="room-place"][data-slot="'+(i+1)+'"]').first().waitFor({timeout:22000}).catch(()=>{});
   }
-  await host.locator('[data-action="next-round"]').waitFor({timeout:30000});
+  await host.locator('[data-action="next-round"]').waitFor({timeout:30000}).catch(async error => {
+    const summarize = async (page) => page.evaluate(async () => {
+      const code=localStorage.getItem('br_last_room');
+      const token=code&&localStorage.getItem('br_room_'+code);
+      const response=await fetch(window.BLINDRANK_API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'get',code,token})});
+      const json=await response.json();
+      return {http:response.status,status:json.room?.status,reveal_index:json.room?.reveal_index,round_number:json.room?.round_number,players:json.players?.length,placements:json.myPlacements?.filter(x=>x!==null).length,view:document.querySelector('main')?.innerText?.slice(0,350)};
+    });
+    console.log('Host debug:',JSON.stringify(await summarize(host)));
+    console.log('Guest debug:',JSON.stringify(await summarize(guest)));
+    throw error;
+  });
   await guest.locator('.compare-grid').waitFor();
   await click(host,'next-round');
   await host.locator('[data-action="room-place"][data-slot="0"]').waitFor();
