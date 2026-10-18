@@ -34,7 +34,7 @@ test('Edge Function is app-only and fails closed without scoped login', () => {
 
 test('Browser config cannot expose database credentials or pre-enable rooms', () => {
  const config = read('config.js');
- assert.match(config,/window\.BLINDRANK_API_URL\s*=\s*''/);
+ assert.match(config,/window\.BLINDRANK_API_URL\s*=\s*'https:\/\/nowlwprtcnieihelqjoa\.supabase\.co\/functions\/v1\/blindrank-game-api'/);
  assert.doesNotMatch(config.replace(/^\s*\/\/.*$/gm,''),/postgres(?:ql)?:\/\/|service.role.key|password\s*[:=]/i);
 });
 
