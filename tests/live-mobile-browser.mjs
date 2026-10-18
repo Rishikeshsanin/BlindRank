@@ -45,9 +45,16 @@ try {
   await click(host,'start-room');
   await host.locator('[data-action="room-place"][data-slot="0"]').waitFor();
   for(let i=0;i<5;i++){
-    await host.locator('[data-action="room-place"][data-slot="'+i+'"]').click();
-    await guest.locator('[data-action="room-place"][data-slot="'+(4-i)+'"]').click();
-    await host.locator('.room-result, .result-hero, [data-action="room-place"][data-slot="'+(i+1)+'"]').first().waitFor({timeout:22000}).catch(()=>{});
+    await host.locator('[data-action="room-place"][data-slot="'+i+'"]:not([disabled])').click();
+    await host.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000});
+    await guest.locator('[data-action="room-place"][data-slot="'+(4-i)+'"]:not([disabled])').click();
+    if(i<4){
+      await guest.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000});
+      await Promise.all([
+        host.waitForFunction(n=>document.querySelectorAll('.round-dot.done').length===n,i+1,{timeout:30000}),
+        guest.waitForFunction(n=>document.querySelectorAll('.round-dot.done').length===n,i+1,{timeout:30000})
+      ]);
+    }
   }
   await host.locator('[data-action="next-round"]').waitFor({timeout:30000}).catch(async error => {
     const summarize = async (page) => page.evaluate(async () => {
@@ -75,8 +82,11 @@ try {
   await click(host,'submit-judge');
   await guest.locator('[data-action="room-place"][data-slot="0"]').waitFor();
   for(let i=0;i<5;i++){
-    await guest.locator('[data-action="room-place"][data-slot="'+i+'"]').click();
-    if(i<4)await guest.locator('[data-action="room-place"][data-slot="'+(i+1)+'"]').waitFor();
+    await guest.locator('[data-action="room-place"][data-slot="'+i+'"]:not([disabled])').click();
+    if(i<4) {
+      await guest.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000});
+      await guest.waitForFunction(n=>document.querySelectorAll('.round-dot.done').length===n,i+1,{timeout:30000});
+    }
   }
   await guest.locator('.scoreboard').waitFor({timeout:30000});
   assert.match(await guest.locator('.scoreboard').innerText(),/10/);
