@@ -1,0 +1,21 @@
+name: BlindRank live room smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - tests/live-room-smoke.mjs
+      - .github/workflows/live-room-smoke.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rooms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Nonprivileged BlindRank API integration
+        run: node tests/live-room-smoke.mjs
