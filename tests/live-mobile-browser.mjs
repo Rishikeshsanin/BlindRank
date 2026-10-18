@@ -24,6 +24,7 @@ const join = async(roomCode) => {
   await guest.locator('.room-code').waitFor();
   assert.equal((await guest.locator('.room-code').innerText()).trim(),roomCode);
   await click(guest,'toggle-ready');
+  await guest.waitForFunction(()=>document.querySelector('[data-action="toggle-ready"]')?.textContent.includes('UNREADY'),null,{timeout:30000});
 };
 const newRoom = async (mode) => {
   await host.goto(SITE,{waitUntil:'domcontentloaded'});
@@ -49,7 +50,17 @@ try {
     await host.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000});
     await guest.locator('[data-action="room-place"][data-slot="'+(4-i)+'"]:not([disabled])').click();
     if(i<4){
-      await guest.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000});
+      await guest.waitForFunction(n=>document.querySelectorAll('.rank-slot.filled').length===n,i+1,{timeout:30000}).catch(async err=>{
+        const describe=async page=>page.evaluate(async()=>{
+          const code=localStorage.getItem('br_last_room'),token=code&&localStorage.getItem('br_room_'+code);
+          const response=await fetch(window.BLINDRANK_API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'get',code,token})});
+          const json=await response.json();
+          return {http:response.status,status:json.room?.status,index:json.room?.reveal_index,placements:json.myPlacements?.filter(x=>x!==null).length,filled:document.querySelectorAll('.rank-slot.filled').length,message:document.querySelector('#toast')?.innerText?.slice(0,120),screen:document.querySelector('main')?.innerText?.slice(0,160)};
+        });
+        console.log('Guest fill timeout at item',i+1,JSON.stringify(await describe(guest)));
+        console.log('Host at same item',JSON.stringify(await describe(host)));
+        throw err;
+      });
       await Promise.all([
         host.waitForFunction(n=>document.querySelectorAll('.round-dot.done').length===n,i+1,{timeout:30000}),
         guest.waitForFunction(n=>document.querySelectorAll('.round-dot.done').length===n,i+1,{timeout:30000})
