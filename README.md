@@ -12,9 +12,9 @@ Future Minglecade listing: https://minglecade.vercel.app (independent app; Mingl
 - Custom Rank with private player-entered five-item categories.
 - 18 curated categories and 108 distinct five-item content packs.
 - Replay, random category, category search, responsive mobile UI and result card export.
-- Built-in logic tests: `npm run check` (7 current Node tests).
+- Built-in checks: `npm run check` (12 Node tests covering core game rules and Hub governance).
 
-**Party Room buttons are intentionally disabled until backend credentials and a real two-device test are completed.** Deployed code is not evidence of working multiplayer.
+**Party Room is enabled on the deployed frontend.** The restricted Supabase connection and live two-client API integration have passed. Production mobile-browser smoke testing and real-device follow-up are tracked separately.
 
 ## Architecture: existing Supabase Project Hub
 
@@ -23,9 +23,9 @@ Future Minglecade listing: https://minglecade.vercel.app (independent app; Mingl
 - Registry: `hub.apps` App **#15**, `slug=blindrank`, `schema_name=blindrank`.
 - App database: `blindrank.rooms`, `blindrank.players`, `blindrank.placements` with RLS enabled.
 - Transactional PostgreSQL functions: `blindrank.join_room`, `blindrank.place`, `blindrank.maybe_advance`, `blindrank.depart`.
-- App-only group role `blindrank_runtime` (NOLOGIN) and app-only login `blindrank_app` (credential must be configured); ordinary browser roles have no raw-table access.
-- App-only Supabase Edge Function `blindrank-game-api` deployed in Project Hub and **not yet production-connected**.
-- Client connects directly to the Edge Function only after its backend passes live integration tests. Private game items and judge choices stay on the server.
+- App-only group role `blindrank_runtime` (NOLOGIN) and restricted login `blindrank_app` (credential stored privately in Project Hub Edge Function Secrets); ordinary browser roles have no raw-table access.
+- App-only Supabase Edge Function `blindrank-game-api` deployed in Project Hub, publicly reachable and verified using the scoped database login.
+- The browser calls only the public BlindRank Edge Function endpoint. No database URL or password is exposed in frontend code; private game items and judge choices stay on the server.
 
 Before any Hub write, read **`AGENTS.md`** and **`SUPABASE_HUB_RULES.md`**, then read `hub.read_me_first`, check the `hub.apps` entry, and run:
 
@@ -44,20 +44,18 @@ Do **not** run the retired `supabase/migrations/202610160001_blindrank.sql` or d
 | `supabase/project-hub/migrations/blindrank__003_app_login.sql` | Dedicated login role, no credentials checked in |
 | `supabase/functions/blindrank-game-api/index.ts` | App-only backend |
 | `supabase/functions/blindrank-game-api/data.js` | Curated backend content packs |
-| `config.js` | Public Edge Function URL (blank until verified) |
+| `config.js` | Public Edge Function URL (no secrets) |
 
-### Final activation: controlled manual secret setup
+### Multiplayer activation and validation
 
-The Hub governance prohibits the app from using the shared `SUPABASE_SERVICE_ROLE_KEY` or the administrator DB URI. The required Edge secret could not be securely provisioned through the available integration, so **no credential was published and party rooms remain disabled**.
+The existing Project Hub's restricted `blindrank_app` credential was configured privately and the BlindRank-only Edge Function reports `{ "status": "ready", "app": "blindrank" }` from its public health route. The project-wide administrator/service-role key was not given to this app.
 
-1. Using the Project Hub Supabase dashboard **SQL Editor**, create a strong unique password for the existing `blindrank_app` login using `ALTER ROLE blindrank_app PASSWORD '<unique-generated-secret>';`. Keep that password private; do not paste it in chat or commit it.
-2. Use the project's **Connect** dialog to obtain a valid SSL/TLS PostgreSQL connection URI for this isolated login (direct if IPv6 is supported or the appropriate session pooler). Do **not** use the `postgres` administrator identity; verify the URI identifies `blindrank_app` and no other role.
-3. In **Project Hub → Edge Functions → Secrets**, store that private URI in **`BLINDRANK_DATABASE_URL`**. Never place it in `config.js`, GitHub, or a public Vercel variable.
-4. Verify `blindrank-game-api` creates and joins a test room using two real browsers/devices. Test five placements, reveal, judge scoring, rematch, concurrency, refresh and host transfer. Confirm it never returns private future items or judge answers early.
-5. Check the security/performance advisors and add public-endpoint rate limits before large-scale promotion.
-6. **Only after all tests pass:** set `window.BLINDRANK_API_URL = 'https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api';` in `config.js`, redeploy Vercel, and verify again.
+- **Live API smoke: passed** using two independent clients in [GitHub Actions](https://github.com/Rishikeshsanin/BlindRank/actions/workflows/live-room-smoke.yml). Validated Classic Party create, join, ready, five synchronized placements, results, rematch and host transfer; also validated hidden Judge choices, five turns and a 10-point perfect ranking.
+- **Public frontend:** `config.js` contains only the nonsecret `https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api` endpoint, deployed automatically to Vercel from `main`.
+- **Production browser regression:** `tests/live-mobile-browser.mjs` and `.github/workflows/production-browser-smoke.yml` exercise the deployed URL with two isolated mobile-browser contexts. Check the [Actions run](https://github.com/Rishikeshsanin/BlindRank/actions/workflows/production-browser-smoke.yml) for verified outcomes.
+- **Operational follow-up:** test on independent physical devices and varying networks, and add durable distributed rate limiting before expecting substantial public traffic. Never substitute the Hub admin key for the restricted login.
 
-The Edge Function intentionally returns a safe unavailable response when its app-only DB secret is missing. Do not remove this guard.
+No dedicated Supabase project was created. No Minglecade repo or unrelated application schema was modified.
 
 #### Readiness and operations
 
@@ -67,7 +65,7 @@ The deployed Edge Function provides a secret-free readiness route:
 GET https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api/health
 ```
 
-It returns HTTP 200 with `status: "ready"` only when PostgreSQL is reachable through the exact `blindrank_app` identity. Without the credential, or with an overprivileged/admin connection, it returns HTTP 503. This is a **readiness check**, not proof that multiplayer works: complete the full live two-browser flow before exposing room buttons.
+It returns HTTP 200 with `status: "ready"` only when PostgreSQL is reachable through the exact `blindrank_app` identity. Without the credential, or with an overprivileged/admin connection, it returns HTTP 503. This readiness check confirms the restricted database connection but does not replace the separate live multiplayer API and browser tests.
 
 Request body sizes, repeated create/join attempts (best-effort per Edge isolate), and simultaneous active room count (up to 500) are bounded. The in-memory throttle is **not** a substitute for durable, IP-verified distributed abuse prevention at scale. Future upgrades must respect the Hub's app-specific ownership boundary.
 
@@ -85,8 +83,8 @@ Node 20+ is required for tests. Browser gameplay itself has no paid API or login
 
 ## Status and boundaries
 
-- **Verified:** standalone frontend release; source published; 12/12 GitHub CI tests (7 game-rule + 5 governance); Hub App #15; isolated RLS tables and restricted runtime role; Edge Function v3 deployed; BlindRank-only SQL QA passed for 12-player capacity, one-way ranking, progression, host transfer, and Judge scoring.
-- **Pending:** private app-only connection secret, end-to-end Edge Function ↔ DB login verification, live two-browser multiplayer tests, durable distributed rate limiting for large public traffic, and public multiplayer activation.
+- **Verified:** deployed solo gameplay, 12/12 Node CI, isolated Hub App #15 with RLS and restricted login, Edge Function v3, database smoke (12-player room capacity and scoring), live two-client Classic and Judge API smoke, public frontend config and production Vercel deployment.
+- **Further verification:** production browser E2E CI, physical-device/network checks and durable distributed anti-abuse controls for larger audiences.
 - **Unchanged:** Minglecade, all other GitHub repositories, all other Project Hub application schemas, Auth, storage, shared service-role credentials and project-wide settings.
 
-Do not claim multiplayer is complete or publicly playable until the pending items are genuinely verified.
+Do not claim physical-device coverage or production-scale load testing without evidence. Private credentials must stay in Supabase Edge Function Secrets.
