@@ -14,7 +14,7 @@ Future Minglecade listing: https://minglecade.vercel.app (independent app; Mingl
 - Replay, random category, category search, responsive mobile UI and result card export.
 - Built-in checks: `npm run check` (12 Node tests covering core game rules and Hub governance).
 
-**Party Room is enabled on the deployed frontend.** The restricted Supabase connection and live two-client API integration have passed. Production mobile-browser smoke testing and real-device follow-up are tracked separately.
+**Party Room is enabled on the deployed frontend.** The restricted database connection, two-client live API integration, and production mobile-browser smoke test for both game modes have passed. Independent physical-device and load testing remain separate follow-ups.
 
 ## Architecture: existing Supabase Project Hub
 
@@ -52,7 +52,7 @@ The existing Project Hub's restricted `blindrank_app` credential was configured 
 
 - **Live API smoke: passed** using two independent clients in [GitHub Actions](https://github.com/Rishikeshsanin/BlindRank/actions/workflows/live-room-smoke.yml). Validated Classic Party create, join, ready, five synchronized placements, results, rematch and host transfer; also validated hidden Judge choices, five turns and a 10-point perfect ranking.
 - **Public frontend:** `config.js` contains only the nonsecret `https://nowlwprtcnieihelqjoa.supabase.co/functions/v1/blindrank-game-api` endpoint, deployed automatically to Vercel from `main`.
-- **Production browser regression:** `tests/live-mobile-browser.mjs` and `.github/workflows/production-browser-smoke.yml` exercise the deployed URL with two isolated mobile-browser contexts. Check the [Actions run](https://github.com/Rishikeshsanin/BlindRank/actions/workflows/production-browser-smoke.yml) for verified outcomes.
+- **Production browser regression: passed** in [GitHub Actions run #39164127872](https://github.com/Rishikeshsanin/BlindRank/actions/runs/39164127872). Two independent mobile Chromium browser contexts completed Classic and Judge flows with no uncaught browser errors. Source: `tests/live-mobile-browser.mjs`.
 - **Operational follow-up:** test on independent physical devices and varying networks, and add durable distributed rate limiting before expecting substantial public traffic. Never substitute the Hub admin key for the restricted login.
 
 No dedicated Supabase project was created. No Minglecade repo or unrelated application schema was modified.
@@ -83,8 +83,8 @@ Node 20+ is required for tests. Browser gameplay itself has no paid API or login
 
 ## Status and boundaries
 
-- **Verified:** deployed solo gameplay, 12/12 Node CI, isolated Hub App #15 with RLS and restricted login, Edge Function v3, database smoke (12-player room capacity and scoring), live two-client Classic and Judge API smoke, public frontend config and production Vercel deployment.
-- **Further verification:** production browser E2E CI, physical-device/network checks and durable distributed anti-abuse controls for larger audiences.
+- **Verified:** deployed solo gameplay, 12/12 Node CI, isolated Hub App #15 (active) with RLS and restricted login, Edge Function v3, database smoke (12-player room capacity and scoring), live two-client Classic and Judge API smoke, public frontend config and production Vercel deployment.
+- **Further verification:** physical-device/network checks and durable distributed anti-abuse controls before high-volume promotion.
 - **Unchanged:** Minglecade, all other GitHub repositories, all other Project Hub application schemas, Auth, storage, shared service-role credentials and project-wide settings.
 
 Do not claim physical-device coverage or production-scale load testing without evidence. Private credentials must stay in Supabase Edge Function Secrets.
