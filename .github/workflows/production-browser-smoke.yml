@@ -1,0 +1,30 @@
+name: BlindRank Production Browser Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tests/live-mobile-browser.mjs
+      - .github/workflows/production-browser-smoke.yml
+      - config.js
+      - app.js
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test dependencies
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Exercise production game in two mobile browser contexts
+        run: node tests/live-mobile-browser.mjs
